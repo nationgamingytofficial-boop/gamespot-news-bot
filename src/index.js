@@ -1,88 +1,68 @@
 const Parser = require("rss-parser");
-const fs = require("fs");
+const axios = require("axios");
 
 const parser = new Parser();
 
-/**
- * Remove HTML tags and extra spaces
- */
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
 function cleanText(text = "") {
     return text
-        .replace(/<[^>]+>/g, "")
+        .replace(/<[^>]*>/g, "")
         .replace(/\s+/g, " ")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
         .trim();
 }
 
-/**
- * Limit text length
- */
-function getSnippet(text = "", maxLength = 300) {
+function snippet(text, length = 250) {
     const cleaned = cleanText(text);
 
-    if (cleaned.length <= maxLength) {
-        return cleaned;
-    }
+    if (cleaned.length <= length) return cleaned;
 
-    return cleaned.substring(0, maxLength).trim() + "...";
+    return cleaned.substring(0, length) + "...";
 }
 
-async function fetchNews() {
-    try {
-        console.log("Fetching GameSpot RSS Feed...\n");
-
-        const feed = await parser.parseURL(
-            "https://www.gamespot.com/feeds/news"
-        );
-
-        if (!feed.items || feed.items.length === 0) {
-            console.log("No news found.");
-            return;
+async function sendTelegram(message) {
+    await axios.post(
+        `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+        {
+            chat_id: CHAT_ID,
+            text: message,
+            parse_mode: "Markdown",
+            disable_web_page_preview: false
         }
-
-        const latestNews = feed.items
-            .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate))
-            .slice(0, 5)
-            .map((item, index) => ({
-                id: index + 1,
-                title: cleanText(item.title),
-                contentSnippet: getSnippet(
-                    item.contentSnippet ||
-                    item.content ||
-                    item.summary ||
-                    item.contentEncoded ||
-                    ""
-                ),
-                link: item.link,
-                pubDate: item.pubDate,
-                publishedAt: new Date(item.pubDate).toISOString()
-            }));
-
-        console.log("========== TOP 5 LATEST GAMESPOT NEWS ==========\n");
-
-        latestNews.forEach(news => {
-            console.log(`News #${news.id}`);
-            console.log(`Title        : ${news.title}`);
-            console.log(`Published    : ${news.pubDate}`);
-            console.log(`Link         : ${news.link}`);
-            console.log(`Summary      : ${news.contentSnippet}`);
-            console.log("------------------------------------------------------------\n");
-        });
-
-        fs.writeFileSync(
-            "./latest-news.json",
-            JSON.stringify(latestNews, null, 2)
-        );
-
-        console.log("✅ latest-news.json created successfully.");
-
-    } catch (error) {
-        console.error("❌ Error:", error);
-        process.exit(1);
-    }
+    );
 }
 
-fetchNews();
+async function main() {
+
+    console.log("Fetching GameSpot RSS...");
+
+    const feed = await parser.parseURL(
+        "https://www.gamespot.com/feeds/news"
+    );
+
+    const latest = feed.items
+        .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate))
+        .slice(0, 5);
+
+    for (const item of latest) {
+
+        const message = `
+🎮 *${cleanText(item.title)}*
+
+📰 ${snippet(item.contentSnippet || item.content || item.summary || "")}
+
+📅 ${item.pubDate}
+
+🔗 ${item.link}
+`;
+
+        await sendTelegram(message);
+
+        console.log("Sent:", item.title);
+    }
+
+    console.log("Done!");
+}
+
+main().catch(console.error);
